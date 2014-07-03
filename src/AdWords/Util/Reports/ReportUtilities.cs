@@ -14,6 +14,7 @@
 
 // Author: api.anash@gmail.com (Anash P. Oommen)
 
+using System.Threading.Tasks;
 using Google.Api.Ads.AdWords.Lib;
 using Google.Api.Ads.Common.Lib;
 using Google.Api.Ads.Common.Util;
@@ -136,6 +137,7 @@ namespace Google.Api.Ads.AdWords.Util.Reports {
       return GetClientReport(reportDefinition, true);
     }
 
+
     /// <summary>
     ///  Downloads a report into memory.
     /// </summary>
@@ -152,6 +154,8 @@ namespace Google.Api.Ads.AdWords.Util.Reports {
             reportVersion);
       return GetClientReportInternal(downloadUrl, postBody, returnMoneyInMicros);
     }
+
+
 
     /// <summary>
     /// Downloads a report to disk.
@@ -195,6 +199,11 @@ namespace Google.Api.Ads.AdWords.Util.Reports {
       return DownloadClientReport(reportDefinition, true, path);
     }
 
+      public async Task<ClientReport> DownloadClientReportAsync<T>(T reportDefinition, string path)
+      {
+          return await DownloadClientReportAsync(reportDefinition, true, path);
+      }
+
     /// <summary>
     /// Downloads a report to disk.
     /// </summary>
@@ -214,6 +223,20 @@ namespace Google.Api.Ads.AdWords.Util.Reports {
             reportVersion);
       return DownloadClientReportInternal(downloadUrl, postBody, returnMoneyInMicros, path);
     }
+
+    public async Task<ClientReport> DownloadClientReportAsync<T>(T reportDefinition, bool returnMoneyInMicros,
+       string path)
+    {
+        AdWordsAppConfig config = (AdWordsAppConfig)User.Config;
+
+        string postBody = "__rdxml=" + HttpUtility.UrlEncode(ConvertDefinitionToXml(
+            reportDefinition));
+        string downloadUrl = string.Format(ADHOC_REPORT_URL_FORMAT, config.AdWordsApiServer,
+              reportVersion);
+        return await DownloadClientReportInternalAsync(downloadUrl, postBody, returnMoneyInMicros, path);
+    }
+
+
 
     /// <summary>
     /// Downloads the client report.
@@ -235,6 +258,17 @@ namespace Google.Api.Ads.AdWords.Util.Reports {
       return retval;
     }
 
+    private async Task<ClientReport> GetClientReportInternalAsync(string downloadUrl, string postBody,
+        bool returnMoneyInMicros)
+    {
+        MemoryStream memStream = new MemoryStream();
+        await DownloadReportToStreamAsync(downloadUrl, returnMoneyInMicros, postBody, memStream);
+
+        ClientReport retval = new ClientReport();
+        retval.Contents = memStream.ToArray();
+        return retval;
+    }
+
     /// <summary>
     /// Downloads the client report.
     /// </summary>
@@ -254,6 +288,19 @@ namespace Google.Api.Ads.AdWords.Util.Reports {
         retval.Path = path;
         return retval;
       }
+    }
+
+    private async Task<ClientReport> DownloadClientReportInternalAsync(string downloadUrl, string postBody,
+        bool returnMoneyInMicros, string path)
+    {
+        ClientReport retval = new ClientReport();
+        using (FileStream fileStream = File.OpenWrite(path))
+        {
+            fileStream.SetLength(0);
+            await DownloadReportToStreamAsync(downloadUrl, returnMoneyInMicros, postBody, fileStream);
+            retval.Path = path;
+            return retval;
+        }
     }
 
     /// <summary>
@@ -309,6 +356,70 @@ namespace Google.Api.Ads.AdWords.Util.Reports {
           }
         }
       }
+    }
+
+    private async Task DownloadReportToStreamAsync(string downloadUrl, bool returnMoneyInMicros,
+    string postBody, Stream outputStream)
+    {
+        AdWordsErrorHandler errorHandler = new AdWordsErrorHandler(user);
+        while (true)
+        {
+            WebResponse response = null;
+            HttpWebRequest request = BuildRequest(downloadUrl, returnMoneyInMicros, postBody);
+            try
+            {
+                response = await request.GetResponseAsync();
+                MediaUtilities.CopyStream(response.GetResponseStream(), outputStream);
+                return;
+            }
+            catch (WebException ex)
+            {
+                Exception reportsException = null;
+
+                try
+                {
+                    response = ex.Response;
+
+                    if (response != null)
+                    {
+                        MemoryStream memStream = new MemoryStream();
+                        MediaUtilities.CopyStream(response.GetResponseStream(), memStream);
+                        String exceptionBody = Encoding.UTF8.GetString(memStream.ToArray());
+                        reportsException = ParseException(exceptionBody);
+                    }
+
+                    if (AdWordsErrorHandler.IsCookieInvalidError(reportsException))
+                    {
+                        reportsException = new AdWordsCredentialsExpiredException(
+                            request.Headers["Authorization"].Replace(CLIENT_LOGIN_PREFIX, ""));
+                    }
+                    else if (AdWordsErrorHandler.IsOAuthTokenExpiredError(reportsException))
+                    {
+                        reportsException = new AdWordsCredentialsExpiredException(
+                            request.Headers["Authorization"]);
+                    }
+                }
+                catch (Exception)
+                {
+                    reportsException = ex;
+                }
+                if (errorHandler.ShouldRetry(reportsException))
+                {
+                    errorHandler.PrepareForRetry(reportsException);
+                }
+                else
+                {
+                    throw reportsException;
+                }
+            }
+            finally
+            {
+                if (response != null)
+                {
+                    response.Close();
+                }
+            }
+        }
     }
 
     /// <summary>
