@@ -81,7 +81,7 @@
     <Compile Include="Properties\Properties.cs" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Common.csproj">
+    <ProjectReference Include="..\..\src\Common\Common.csproj">
       <Project>{277404DB-A439-4450-B3A5-186294CDF245}</Project>
       <Name>Common</Name>
     </ProjectReference>
